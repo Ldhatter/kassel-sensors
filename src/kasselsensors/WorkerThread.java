@@ -45,38 +45,26 @@ public class WorkerThread implements Runnable {
 	@Override
 	public void run() {
 
-		// Get sensor
-		getSensor();
+		// TODO: used for debugging
+		int i = 2;
+		
+		while(i > 0){
+			// Get sensor
+			getSensor();
 
-		// Get sensor data
-		JSONObject data = getSensorData();
-		System.out.println(data.toString());
+			// Get sensor data
+			JSONObject data = getSensorData();
 
-		// Store data to DB
-		updateDB(data);
+			// Store data to DB
+			//updateDB(data);
 
-		// Publish data
-		try {
-			// Connecting to a broker
-			ConnectionFactory factory = new ConnectionFactory();
-			String uri = System.getenv("CLOUDAMQP_URL");
-	    	if (uri == null) uri = "amqp://guest:guest@localhost";
-	    	factory.setUri(uri);
-			Connection connection = factory.newConnection();
-
-			// Open a channel
-			Channel channel = connection.createChannel();
-			channel.queueDeclare(QUEUE_NAME, false, false, false, null);
-			String message = "TESTING";
-			channel.basicPublish("", QUEUE_NAME, null, message.getBytes("UTF-8"));
-			System.out.println(" [x] Sent '" + message + "'");
+			// Publish data
+			publishData(data);	
 			
-		    channel.close();
-		    connection.close();
-			
-		} catch (IOException | TimeoutException | KeyManagementException | NoSuchAlgorithmException | URISyntaxException e) {
-			e.printStackTrace();
+			i--;
 		}
+		
+		System.out.println("done");
 
 	}
 
@@ -97,7 +85,7 @@ public class WorkerThread implements Runnable {
 			con.setRequestMethod("GET");
 
 			int responseCode = con.getResponseCode();
-			System.out.println(String.valueOf(responseCode));
+			//System.out.println(String.valueOf(responseCode));
 
 			BufferedReader reader = new BufferedReader(new InputStreamReader(con.getInputStream()));
 			StringBuffer response = new StringBuffer();
@@ -163,11 +151,11 @@ public class WorkerThread implements Runnable {
 		return id;
 
 	}
-
+		
 	private Instant getSensorDate() {
 
-		int updatedDB = (int) sensor.get("updated");
-		Instant updatedUnix = Instant.ofEpochMilli((long) updatedDB * 1000);
+		JSONObject updatedDB = new JSONObject(sensor.get("lastModified").toString());
+		Instant updatedUnix = Instant.ofEpochMilli((long) updatedDB.get("$date"));
 		Instant updatedUTC = Instant.parse(updatedUnix.toString());
 
 		return updatedUTC;
@@ -181,8 +169,43 @@ public class WorkerThread implements Runnable {
 
 	}
 
-	// TODO: update sensor's lastUpdated date 
+	// TODO: update sensor's lastUpdated date
 	private void setSensorDate() {
 
 	}
+
+	private void publishData(JSONObject data) {
+		
+		JSONObject results = new JSONObject (data, new String[]{"results"});
+		
+		try {
+			// Connecting to a broker
+			ConnectionFactory factory = new ConnectionFactory();
+			String uri = System.getenv("CLOUDAMQP_URL");
+			if (uri == null)
+				uri = "amqp://guest:guest@localhost";
+			factory.setUri(uri);
+			Connection connection = factory.newConnection();
+
+			// Open a channel
+			Channel channel = connection.createChannel();
+			channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+			
+			// Set message
+			String message = results.toString();
+			System.out.println(message);
+			
+			// Publish data
+			channel.basicPublish("", QUEUE_NAME, null, message.getBytes("UTF-8"));
+			System.out.println(" [x] Sent '" + message + "'");
+
+			channel.close();
+			connection.close();
+
+		} catch (IOException | TimeoutException | KeyManagementException | NoSuchAlgorithmException
+				| URISyntaxException e) {
+			e.printStackTrace();
+		}
+	}
+
 }

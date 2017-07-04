@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 
 import com.mongodb.MongoClient;
 import com.mongodb.MongoClientURI;
@@ -20,23 +21,30 @@ public class ThreadPool {
 		sensors.add(new Sensor("Hamburg%20Hafen", 53.529157999999995, 9.981598999999997));
 		sensors.add(new Sensor("Hamburg%20Altona%20Elbhang", 53.54526899999999, 9.944815));
 
-		ExecutorService executor = Executors.newFixedThreadPool(6);
+		ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(5);
 
-		// TODO: find proper place to create the connection
 		// MongoDB connection
 		MongoClient client = new MongoClient(
-				new MongoClientURI("mongodb://kasselpi:kpi@ds129442.mlab.com:29442/kpisensors"));
+				new MongoClientURI("mongodb://kasselpi:kpi@ds129442.mlab.com:29442/kpisensors")); //store as env
 		MongoDatabase db = client.getDatabase("kpisensors");
 		
 
-		for (int i = 0; i < sensors.size(); i++) {
+		for(int i = 0;  i < sensors.size(); i++){
 			Runnable worker = new WorkerThread(sensors.get(i).getLocation(), sensors.get(i).getLat(),
 					sensors.get(i).getLng(), db);
 			executor.execute(worker);
 		}
-		executor.shutdown();
-		while (!executor.isTerminated()) {
+		
+		// TODO: check this implementation. 
+		while(!executor.isShutdown()){
+			if (executor.getTaskCount() == executor.getCompletedTaskCount()){
+				executor.shutdown();
+			}
 		}
+		
+		while (!executor.isTerminated()) { // returns true if all tasks shutdown, must use shutdown first
+		}
+	
 
 		System.out.println("Finished all threads");
 	}

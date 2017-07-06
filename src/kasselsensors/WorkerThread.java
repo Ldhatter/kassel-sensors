@@ -17,12 +17,15 @@ import java.util.concurrent.TimeoutException;
 import javax.ws.rs.core.UriBuilder;
 
 import org.bson.Document;
+import org.bson.types.ObjectId;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
-
+import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.Updates;
+import com.mongodb.client.result.UpdateResult;
 import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.Channel;
@@ -35,36 +38,40 @@ public class WorkerThread implements Runnable {
 	private String coordinates;
 	private MongoDatabase db;
 	private JSONObject sensor;
-
+	private boolean hasResults;
+	private boolean isCancelled;
+	
 	public WorkerThread(String location, double lat, double lng, MongoDatabase db) {
 		this.location = location;
 		this.coordinates = getCoordinates(lat, lng);
 		this.db = db;
+		this.hasResults = false;
+		this.isCancelled = true;
 	}
 
 	@Override
 	public void run() {
 
 		// TODO: used for debugging
-		int i = 2;
-		
-		while(i > 0){
+		//int i = 50;
+
+		while (!isCancelled) {
 			// Get sensor
 			getSensor();
 
 			// Get sensor data
 			JSONObject data = getSensorData();
 
-			// Store data to DB
-			//updateDB(data);
+			if (hasResults) {
+				// Store data to DB
+				updateDB(data);
 
-			// Publish data
-			publishData(data);	
-			
-			i--;
+				// Publish data
+				publishData(data);
+			}
 		}
-		
-		System.out.println("done");
+
+		//System.out.println("done");
 
 	}
 
@@ -84,8 +91,8 @@ public class WorkerThread implements Runnable {
 			HttpURLConnection con = (HttpURLConnection) url.openConnection();
 			con.setRequestMethod("GET");
 
-			int responseCode = con.getResponseCode();
-			//System.out.println(String.valueOf(responseCode));
+			// int responseCode = con.getResponseCode();
+			// System.out.println(String.valueOf(responseCode));
 
 			BufferedReader reader = new BufferedReader(new InputStreamReader(con.getInputStream()));
 			StringBuffer response = new StringBuffer();
@@ -101,6 +108,9 @@ public class WorkerThread implements Runnable {
 			e.printStackTrace();
 		}
 
+		JSONObject meta = (JSONObject) result.get("meta");
+		hasResults = (meta.getInt("found") > 0) ? true : false;
+
 		return result;
 	}
 
@@ -115,6 +125,7 @@ public class WorkerThread implements Runnable {
 
 		for (int i = 0; i < results.length(); i++) {
 
+			// Get result data 
 			JSONObject result = results.getJSONObject(i);
 			JSONObject date = result.getJSONObject("date");
 			String utc = date.getString("utc");
@@ -131,8 +142,8 @@ public class WorkerThread implements Runnable {
 		// Add sensor data to db
 		sensorData.insertMany(documents);
 
-		// TODO: update sensor data
-		// update date for _id sensor in Sensors collection
+		// Update sensor's lastModified date
+		setSensorDate();
 	}
 
 	private void getSensor() {
@@ -151,7 +162,7 @@ public class WorkerThread implements Runnable {
 		return id;
 
 	}
-		
+
 	private Instant getSensorDate() {
 
 		JSONObject updatedDB = new JSONObject(sensor.get("lastModified").toString());
@@ -169,15 +180,19 @@ public class WorkerThread implements Runnable {
 
 	}
 
-	// TODO: update sensor's lastUpdated date
 	private void setSensorDate() {
+
+		// Access to collection
+		MongoCollection<Document> sensors = db.getCollection("sensors");
+
+		sensors.updateOne(Filters.eq("_id", new ObjectId(getSensorId())), Updates.currentDate("lastModified"));
 
 	}
 
 	private void publishData(JSONObject data) {
-		
-		JSONObject results = new JSONObject (data, new String[]{"results"});
-		
+
+		JSONObject results = new JSONObject(data, new String[] { "results" });
+
 		try {
 			// Connecting to a broker
 			ConnectionFactory factory = new ConnectionFactory();
@@ -190,11 +205,11 @@ public class WorkerThread implements Runnable {
 			// Open a channel
 			Channel channel = connection.createChannel();
 			channel.queueDeclare(QUEUE_NAME, false, false, false, null);
-			
+
 			// Set message
 			String message = results.toString();
 			System.out.println(message);
-			
+
 			// Publish data
 			channel.basicPublish("", QUEUE_NAME, null, message.getBytes("UTF-8"));
 			System.out.println(" [x] Sent '" + message + "'");

@@ -30,60 +30,55 @@ import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.Channel;
 
-public class WorkerThread implements Runnable {
+public class WorkerThread extends Thread {
 
 	private final static String QUEUE_NAME = "sensorData";
 
+	private String sensorId;
 	private String location;
 	private String coordinates;
 	private MongoDatabase db;
 	private JSONObject sensor;
 	private boolean hasResults;
 	private boolean isCancelled;
-	
-	public WorkerThread(String location, double lat, double lng, MongoDatabase db) {
+
+	public WorkerThread(String sensorId, String location, double lat, double lng, MongoDatabase db) {
+		this.sensorId = sensorId;
 		this.location = location;
 		this.coordinates = getCoordinates(lat, lng);
 		this.db = db;
 		this.hasResults = false;
-		this.isCancelled = true;
+		this.isCancelled = false;
 	}
 
 	@Override
 	public void run() {
 
-		// TODO: used for debugging
-		//int i = 50;
-
 		while (!isCancelled) {
-			// Get sensor
-			getSensor();
 
 			// Get sensor data
 			JSONObject data = getSensorData();
 
-			if (hasResults) {
-				// Store data to DB
-				updateDB(data);
+			// if (hasResults) {
+			// Store data to DB
+			updateDB(data);
 
-				// Publish data
-				publishData(data);
-			}
+			// Publish data
+			publishData(data);
+			// }
+
 		}
 
-		//System.out.println("done");
+		System.out.println("done");
 
 	}
 
 	private JSONObject getSensorData() {
 
-		Instant lastUpdated = getSensorDate();
-
 		JSONObject result = new JSONObject();
 
-		UriBuilder builder = UriBuilder.fromPath("//api.openaq.org").scheme("https").path("/v1/measurements")
-				.queryParam("location", location).queryParam("coordinates", coordinates)
-				.queryParam("date_from", lastUpdated);
+		UriBuilder builder = UriBuilder.fromPath("//172.16.40.118:8080").scheme("http")
+				.path("/kasselpi/kpi/tempservice");
 		String urlString = builder.build().toString();
 
 		try {
@@ -108,58 +103,59 @@ public class WorkerThread implements Runnable {
 			e.printStackTrace();
 		}
 
-		JSONObject meta = (JSONObject) result.get("meta");
-		hasResults = (meta.getInt("found") > 0) ? true : false;
-
 		return result;
 	}
 
-	private void updateDB(JSONObject data) {
+	private void updateDB(JSONObject result) {
 
 		// Access to collection
-		MongoCollection<Document> sensorData = db.getCollection("sensorData");
+		MongoCollection<Document> sensorData = db.getCollection("pmData");
 
-		JSONArray results = new JSONArray(data.get("results").toString());
+		// JSONArray results = new JSONArray(data.toString());
 
 		List<Document> documents = new ArrayList<Document>();
 
-		for (int i = 0; i < results.length(); i++) {
+		// Get result data
+		JSONObject jAverage = result.getJSONObject("average");
+		JSONObject jMedian = result.getJSONObject("median");
+		JSONObject jMin = result.getJSONObject("min");
+		JSONObject jMax = result.getJSONObject("max");
+		JSONObject jStd = result.getJSONObject("sd");
+		long date = result.getLong("time");
+		Document average = new Document("time", jAverage.getLong("time")).append("pm", jAverage.getDouble("pm"));
+		Document median = new Document("time", jMedian.getLong("time")).append("pm", jMedian.getDouble("pm"));
+		Document min = new Document("time", jMin.getLong("time")).append("pm", jMin.getDouble("pm"));
+		Document max = new Document("time", jMax.getLong("time")).append("pm", jMax.getDouble("pm"));
+		Document std = new Document("time", jStd.getLong("time")).append("value", jStd.getDouble("value"));
 
-			// Get result data 
-			JSONObject result = results.getJSONObject(i);
-			JSONObject date = result.getJSONObject("date");
-			String utc = date.getString("utc");
-			String unit = result.getString("unit");
-			double value = result.getDouble("value");
+		// Make Document
+		Document dataDocument = new Document("sensorId", sensorId).append("date", date).append("average", average)
+				.append("median", median).append("min", min).append("max", max).append("std", std);
 
-			// Make Document
-			Document dataDocument = new Document("sensorId", getSensorId()).append("updated", utc).append("unit", unit)
-					.append("value", value);
-
-			documents.add(dataDocument);
-		}
+		documents.add(dataDocument);
 
 		// Add sensor data to db
 		sensorData.insertMany(documents);
 
-		// Update sensor's lastModified date
-		setSensorDate();
+		System.out.println("inserted?");
 	}
 
 	private void getSensor() {
 
 		// Access to collection
-		MongoCollection<Document> sensors = db.getCollection("sensors");
+		MongoCollection<Document> sensors = db.getCollection("raspi");
 
 		Document sensorDoc = sensors.find(new Document("location", location)).first();
 		sensor = new JSONObject(sensorDoc.toJson());
 
 	}
 
-	private String getSensorId() {
+	private void setSensorDate() {
 
-		String id = (new JSONObject(sensor.get("_id").toString())).getString("$oid");
-		return id;
+		// Access to collection
+		MongoCollection<Document> sensors = db.getCollection("sensors");
+
+		sensors.updateOne(Filters.eq("_id", new ObjectId(sensorId)), Updates.currentDate("lastModified"));
 
 	}
 
@@ -177,15 +173,6 @@ public class WorkerThread implements Runnable {
 
 		String coords = String.valueOf(lat) + ',' + String.valueOf(lng);
 		return coords;
-
-	}
-
-	private void setSensorDate() {
-
-		// Access to collection
-		MongoCollection<Document> sensors = db.getCollection("sensors");
-
-		sensors.updateOne(Filters.eq("_id", new ObjectId(getSensorId())), Updates.currentDate("lastModified"));
 
 	}
 

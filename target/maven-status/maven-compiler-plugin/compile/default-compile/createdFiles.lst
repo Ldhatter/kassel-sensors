@@ -1,3 +1,12 @@
-kasselsensors/SensorsService.class
-kasselsensors/SensorsService$1.class
+kasselsensors/Consumer$1.class
 kasselsensors/SensorsService$2.class
+kasselsensors/Sensor.class
+kasselsensors/ThreadPool.class
+kasselsensors/RaspiService$2.class
+kasselsensors/WorkerThread.class
+kasselsensors/ThreadPool$1.class
+kasselsensors/SensorsService.class
+kasselsensors/RaspiService.class
+kasselsensors/SensorsService$1.class
+kasselsensors/Consumer.class
+kasselsensors/RaspiService$1.class
